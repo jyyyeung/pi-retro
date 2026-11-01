@@ -1,6 +1,6 @@
 # pi-retro
 
-[![npm](https://img.shields.io/npm/v/pi-retro?style=flat&logo=npm&logoColor=white)](https://www.npmjs.com/package/pi-retro) [![CI](https://img.shields.io/github/actions/workflow/status/jyyyeung/pi-retro/test.yml?style=flat&logo=github&label=CI)](https://github.com/jyyyeung/pi-retro/actions/workflows/test.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT) [![Pi](https://img.shields.io/badge/pi-%E2%89%A51.3-6366F1?style=flat)](https://pi.dev) [![Node](https://img.shields.io/badge/node-%E2%89%A520-339933?style=flat&logo=node.js&logoColor=white)](https://nodejs.org)
+[![npm](https://img.shields.io/npm/v/@jyyyeung/pi-retro?style=flat&logo=npm&logoColor=white)](https://www.npmjs.com/package/@jyyyeung/pi-retro) [![CI](https://img.shields.io/github/actions/workflow/status/jyyyeung/pi-retro/test.yml?style=flat&logo=github&label=CI)](https://github.com/jyyyeung/pi-retro/actions/workflows/test.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat)](https://opensource.org/licenses/MIT) [![Pi](https://img.shields.io/badge/pi-%E2%89%A51.3-6366F1?style=flat)](https://pi.dev) [![Node](https://img.shields.io/badge/node-%E2%89%A520-339933?style=flat&logo=node.js&logoColor=white)](https://nodejs.org)
 
 A retrospective loop for your [pi](https://pi.dev) coding-agent setup — so
 friction turns into changes instead of a memory of vibes.
@@ -23,7 +23,7 @@ curated improvement queue with a human in the loop.
 ## Install
 
 ```bash
-pi install npm:pi-retro
+pi install npm:@jyyyeung/pi-retro
 ```
 
 Then restart pi (or `/reload`).

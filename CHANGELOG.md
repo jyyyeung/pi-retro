@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Published as `@jyyyeung/pi-retro`.** npm rejects the unscoped name
+  `pi-retro` as too similar to the existing `p-retry` package, so the package
+  moved under the author scope: `pi install npm:@jyyyeung/pi-retro`. The
+  GitHub repository, the tool names and the `/retro`/`/retro-stats` commands
+  are unchanged.
 - **The stats command is now `/retro-stats`.** A registered extension command
   named `retro` shadowed `prompts/retro.md`: pi dispatches extension commands
   before prompt templates, so `/retro` — documented as the weekly review — only
