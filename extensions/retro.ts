@@ -420,7 +420,10 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand("retro", {
+  // Named `retro-stats`, not `retro`: extension commands are dispatched BEFORE
+  // prompt templates, so a command named `retro` would shadow prompts/retro.md
+  // (the weekly review) and /retro would only ever print stats.
+  pi.registerCommand("retro-stats", {
     description: "Show pi-retro friction stats (user ledger, plus this repo's ledger when present)",
     handler: async (_args: string, ctx) => {
       const cwd = ctx?.cwd ?? process.cwd();

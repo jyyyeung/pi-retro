@@ -47,8 +47,9 @@ edit (areas are config — see below). `friction_stats` works before that: it
 reports zeros and the path it would create, and never throws just because
 nothing has been logged yet.
 
-`/retro` prints the same aggregate without invoking a model turn, which is the
-cheap way to check whether a weekly review is due.
+`/retro-stats` prints the aggregate without invoking a model turn — the cheap
+way to check whether a weekly review is due. (`/retro` is the review itself,
+delivered by the bundled prompt template plus the `weekly-review` skill.)
 
 ## Scopes
 
@@ -99,13 +100,14 @@ self-describing, survives package updates, and can differ per scope.
 | `log_friction` | Append one entry (or bump a recurrence). Params: `project`, `area`, `phase`, `problem`, optional `fix`, `cost` (S/M/L), `scope`, `force`. |
 | `friction_stats` | Read-only aggregate: counts by area/project, open vs resolved, top recurring, malformed-line count. Use instead of reading whole files. |
 | `friction_resolve` | Append a resolution marker to one unambiguously-matched open entry. |
-| `friction_archive` | Move resolved (and optionally stale) entries to `archive/YYYY-MM-DD.md`. |
+| `friction_archive` | Move resolved entries to `archive/YYYY-MM-DD.md`; `resolvedOnly: false` also moves unresolved entries idle longer than `days` (default 30). |
 
 ## The weekly ritual (`/retro`)
 
 1. `friction_stats` both scopes; read unresolved entries.
-2. Evaluate ACTIVE trials from your trials registry against their
-   pre-registered success criteria → KEEP / REMOVE / EXTEND.
+2. Evaluate ACTIVE trials from your trials registry (convention:
+   `~/.pi/agent/meta/extension-trials.md`) against their pre-registered
+   success criteria → KEEP / REMOVE / EXTEND per trial.
 3. Optionally research trends for the top friction areas.
 4. Write a dated report (`~/.pi/agent/meta/weekly-reviews/YYYY-MM-DD.md`)
    with `adopt` / `evaluate` / `reject` buckets — rejections carry reasons,
@@ -158,8 +160,10 @@ the file (with its editable header) on first use.
 instead of being dropped silently. The usual cause is a field order change; the
 format is `date | project | area | phase | problem | fix?`.
 
-**`/retro` produced no report.** It needs a model turn and a working model; the
-aggregate it prints first is available without one.
+**`/retro` produced no report.** `/retro` is a prompt template plus the
+`weekly-review` skill, so it needs a model turn. `/retro-stats` gives you the
+same aggregate with no model involvement, and `friction_stats` gives it as a
+tool call.
 
 **The ledger went to the wrong repo.** Project entries resolve from the session
 cwd. `PI_RETRO_LEDGER` overrides the user ledger path; project ledgers are

@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2]
+
+### Changed
+
+- **The stats command is now `/retro-stats`.** A registered extension command
+  named `retro` shadowed `prompts/retro.md`: pi dispatches extension commands
+  before prompt templates, so `/retro` — documented as the weekly review — only
+  ever printed aggregate stats and the review was unreachable. `/retro` is now
+  the review (prompt template + `weekly-review` skill); `/retro-stats` is the
+  free aggregate with no model turn.
+
+### Docs
+
+- README verified claim-by-claim against the source: `friction_archive`'s
+  `resolvedOnly`/`days` parameters, the trials registry convention path, and a
+  troubleshooting entry that no longer claims `/retro` needs a model to print
+  stats.
+- LICENSE holder is `jyyyeung` (was unset/`pi-retro contributors`).
+
 ## [0.1.1] — 2026-11-01
 
 ### Fixed
