@@ -12,7 +12,8 @@ description: >-
 # Friction logging (pi-retro)
 
 Call `log_friction` once per friction event. The weekly review parses the
-ledger — keep fields clean: one line, no pipes, no newlines.
+ledger — keep fields clean: one line, no newlines (a literal `|` is
+escaped on write and unescaped on read, so it survives intact).
 
 ## When to log (cost filter)
 
