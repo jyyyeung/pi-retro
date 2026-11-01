@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3]
+
+The first version actually published to npm. `0.1.2` was staged during the
+move to the `@jyyyeung` scope and npm refuses to publish over a staged
+version, so the release was renumbered. No code change.
+
 ## [0.1.2]
 
 ### Changed
