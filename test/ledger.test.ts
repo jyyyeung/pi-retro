@@ -4,6 +4,8 @@ import {
   bumpRecurrence,
   computeStats,
   daysBetween,
+  escapeField,
+  findMalformed,
   findSimilar,
   formatLine,
   parseConfig,
@@ -12,7 +14,11 @@ import {
   partitionForArchive,
   renderHeader,
   similarity,
+  splitFields,
+  today,
   tokenize,
+  unescapeField,
+  type FrictionEntry,
 } from "../src/ledger.ts";
 
 const NOW = "2026-10-19";
@@ -166,4 +172,66 @@ test("parseItems: line count preserved", () => {
   const text = renderHeader() + "2026-10-13 | app | tooling | i | p | f";
   const items = parseItems(text);
   assert.equal(items.length, text.split("\n").length);
+});
+
+test("fields: literal pipes survive the round trip (escaped, not mangled)", () => {
+  const entry: FrictionEntry = {
+    date: "2026-10-13",
+    project: "app",
+    area: "tooling",
+    phase: "impl",
+    problem: "shell chokes on `a || b` and on grep 'x|y'",
+    fix: "quote the pattern | use -e",
+  };
+  const line = formatLine(entry);
+  assert.ok(line.includes("\\|"), `expected escaped pipe in: ${line}`);
+  const back = parseLine(line);
+  assert.equal(back?.problem, entry.problem);
+  assert.equal(back?.fix, entry.fix);
+});
+
+test("fields: unescaped legacy pipes still parse (backward compatible)", () => {
+  const e = parseLine("2026-10-13 | app | tooling | impl | problem a | b | fix hint");
+  assert.equal(e?.problem, "problem a");
+  assert.equal(e?.fix, "b | fix hint");
+});
+
+test("fields: resolved note with a pipe roundtrips", () => {
+  const entry: FrictionEntry = {
+    date: "2026-10-13",
+    project: "app",
+    area: "quality",
+    phase: "lane",
+    problem: "flaky",
+    resolvedDate: "2026-10-14",
+    resolvedNote: "pinned seed | reran suite",
+  };
+  const back = parseLine(formatLine(entry));
+  assert.equal(back?.resolvedNote, "pinned seed | reran suite");
+});
+
+test("fields: backslash and pipe escape order is stable", () => {
+  assert.equal(unescapeField(escapeField("a\\b|c")), "a\\b|c");
+  assert.equal(unescapeField(escapeField("\\|")), "\\|");
+  assert.deepEqual(splitFields("x | a\\|b | y"), ["x", "a\\|b", "y"]);
+});
+
+test("findMalformed: entry-shaped broken lines reported, header lines ignored", () => {
+  const text = [
+    "# header",
+    "2026-10-13 | app | tooling | impl | good one",
+    "2026-10-14 | app | tooling", // truncated hand edit
+    "<!-- pi-retro: areas = tooling|tokens -->",
+  ].join("\n");
+  const bad = findMalformed(text);
+  assert.equal(bad.length, 1);
+  assert.equal(bad[0].line, 3);
+  assert.match(bad[0].text, /truncated|\| app \| tooling$/);
+});
+
+test("today: local calendar date, not UTC", () => {
+  const d = new Date();
+  d.setHours(23, 30, 0, 0);
+  const p = (n: number) => String(n).padStart(2, "0");
+  assert.equal(today(d), `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`);
 });

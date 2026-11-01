@@ -46,7 +46,10 @@ export const DEFAULT_AREAS: readonly string[] = [
 ];
 
 export function today(now: Date = new Date()): string {
-  return now.toISOString().slice(0, 10);
+  // Local date, not UTC: a ledger entry written at 23:30 local time must not
+  // land on tomorrow's date (or yesterday's, east of UTC).
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -82,6 +85,53 @@ const ENTRY_PREFIX_RE = /^\d{4}-\d{2}-\d{2} \| /;
 const RECURRENCE_RE = /\s*\[x(\d+)(?:\s+last\s+(\d{4}-\d{2}-\d{2}))?\]$/;
 const RESOLVED_RE = /\s*→\s*RESOLVED\s+(\d{4}-\d{2}-\d{2}):?\s*(.*)$/;
 
+/**
+ * Escaping: a literal `|` is legal in a problem statement ("a || b panics"),
+ * and silently rewriting it to `/` changes what the human wrote. Instead the
+ * writer escapes `\` and `|`, and the reader unescapes them, so `a || b`
+ * survives the round trip while the field separator stays unambiguous.
+ */
+export function escapeField(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
+}
+
+export function unescapeField(s: string): string {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === "\\" && (s[i + 1] === "|" || s[i + 1] === "\\")) {
+      out += s[i + 1];
+      i++;
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+/** Split on unescaped ` | ` field separators, keeping escape sequences intact. */
+export function splitFields(s: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === "\\" && i + 1 < s.length) {
+      cur += ch + s[i + 1];
+      i++;
+      continue;
+    }
+    if (ch === " " && s[i + 1] === "|" && s[i + 2] === " ") {
+      out.push(cur);
+      cur = "";
+      i += 2;
+      continue;
+    }
+    cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+
 export function parseLine(raw: string): FrictionEntry | null {
   const line = raw.trimEnd();
   if (!ENTRY_PREFIX_RE.test(line)) return null;
@@ -92,16 +142,16 @@ export function parseLine(raw: string): FrictionEntry | null {
   const rm = rest.match(RESOLVED_RE);
   if (rm) {
     resolvedDate = rm[1];
-    resolvedNote = rm[2].trim() || undefined;
+    resolvedNote = rm[2].trim() ? unescapeField(rm[2].trim()) : undefined;
     rest = rest.slice(0, rm.index);
   }
 
-  const parts = rest.split(" | ").map((p) => p.trim());
+  const parts = splitFields(rest).map((p) => p.trim());
   if (parts.length < 5) return null;
   const [date, project, area, phase, problemField] = parts;
-  const fix = parts.length >= 6 ? parts.slice(5).join(" | ") : undefined;
+  const fix = parts.length >= 6 ? unescapeField(parts.slice(5).join(" | ")) : undefined;
 
-  let problem = problemField;
+  let problem = unescapeField(problemField);
   let recurrence: number | undefined;
   let lastSeen: string | undefined;
   const cm = problem.match(RECURRENCE_RE);
@@ -111,7 +161,13 @@ export function parseLine(raw: string): FrictionEntry | null {
     problem = problem.slice(0, cm.index);
   }
 
-  const entry: FrictionEntry = { date, project, area, phase, problem: problem.trim() };
+  const entry: FrictionEntry = {
+    date,
+    project: unescapeField(project),
+    area: unescapeField(area),
+    phase: unescapeField(phase),
+    problem: problem.trim(),
+  };
   if (fix) entry.fix = fix;
   if (recurrence !== undefined) {
     entry.recurrence = recurrence;
@@ -129,17 +185,38 @@ export function formatLine(e: FrictionEntry): string {
   if (e.recurrence !== undefined && e.recurrence >= 2) {
     problem += ` [x${e.recurrence}${e.lastSeen ? ` last ${e.lastSeen}` : ""}]`;
   }
-  const parts = [e.date, e.project, e.area, e.phase, problem];
-  if (e.fix) parts.push(e.fix);
+  const parts = [e.date, escapeField(e.project), escapeField(e.area), escapeField(e.phase), escapeField(problem)];
+  if (e.fix) parts.push(escapeField(e.fix));
   let line = parts.join(" | ");
   if (e.resolvedDate) {
-    line += ` → RESOLVED ${e.resolvedDate}${e.resolvedNote ? `: ${e.resolvedNote}` : ""}`;
+    line += ` → RESOLVED ${e.resolvedDate}${e.resolvedNote ? `: ${escapeField(e.resolvedNote)}` : ""}`;
   }
   return line;
 }
 
 export function parseItems(text: string): LedgerItem[] {
   return text.split("\n").map((line) => ({ line, entry: parseLine(line) }));
+}
+
+export interface MalformedLine {
+  line: number; // 1-based
+  text: string;
+}
+
+/**
+ * Entry-shaped lines that failed to parse (hand edits, truncated writes). The
+ * stats tools report these instead of silently computing over a subset: a
+ * ledger whose lines are quietly ignored looks complete while losing events.
+ */
+export function findMalformed(text: string): MalformedLine[] {
+  const out: MalformedLine[] = [];
+  text.split("\n").forEach((line, i) => {
+    const trimmed = line.trimEnd();
+    if (ENTRY_PREFIX_RE.test(trimmed) && parseLine(trimmed) === null) {
+      out.push({ line: i + 1, text: trimmed });
+    }
+  });
+  return out;
 }
 
 // ---------------------------------------------------------------------------

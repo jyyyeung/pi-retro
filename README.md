@@ -29,7 +29,12 @@ pi -e ./pi-retro
 3. Approve → apply, then `friction_archive` clears the reviewed ledger.
 
 First `log_friction` call bootstraps the ledger file with a header you can
-edit (areas are config — see below).
+edit (areas are config — see below). `friction_stats` works before that: it
+reports zeros and the path it would create, and never throws just because
+nothing has been logged yet.
+
+`/retro` prints the same aggregate without invoking a model turn, which is the
+cheap way to check whether a weekly review is due.
 
 ## Scopes
 
@@ -53,11 +58,16 @@ YYYY-MM-DD | project | area | phase | problem | fix?
 ```
 
 Managed markers (tools write them; they stay human-readable):
-
 - `[x3 last 2026-10-15]` — recurrence: the same friction hit again within 30
   days bumps the counter instead of adding a line.
 - `→ RESOLVED 2026-10-14: note` — resolution: the strongest positive signal
   the review gets.
+
+A literal `|` inside a field is escaped (`\|`) on write and unescaped on read,
+so `a || b fails` stays exactly as written instead of being rewritten to
+`a / b`. Entries written by older versions (unescaped pipes) still parse. Lines
+that look like entries but fail to parse are reported by `friction_stats`
+(with line numbers) instead of being silently dropped from the totals.
 
 ### Config lives in the file
 

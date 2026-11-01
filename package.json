@@ -1,6 +1,6 @@
 {
   "name": "pi-retro",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Retrospective loop for your pi coding-agent setup: cost-filtered friction ledger, trials verdicts, weekly adopt/evaluate/reject review.",
   "type": "module",
   "license": "MIT",

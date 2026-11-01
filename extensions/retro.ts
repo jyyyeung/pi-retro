@@ -20,6 +20,7 @@ import * as path from "node:path";
 import {
   bumpRecurrence,
   computeStats,
+  findMalformed,
   findSimilar,
   formatLine,
   parseConfig,
@@ -74,14 +75,36 @@ function ensureLedger(ledgerPath: string): void {
   fs.writeFileSync(ledgerPath, renderHeader());
 }
 
-/** Ledger fields are one line, pipe-free — the format is the parsing contract. */
+/** Ledger fields are one line each; pipes are escaped by formatLine. */
 function clean(s: string): string {
-  return s.replace(/\|/g, "/").replace(/\s*\n\s*/g, " ").trim();
+  return s.replace(/\s*\n\s*/g, " ").trim();
 }
 
+/** Whole-file rewrite: temp file + rename, so a crash mid-write cannot leave a truncated ledger. */
 function writeItems(ledgerPath: string, items: LedgerItem[]): void {
   const body = items.map((i) => i.line).join("\n").replace(/\n+$/, "\n");
-  fs.writeFileSync(ledgerPath, body.endsWith("\n") ? body : body + "\n");
+  const text = body.endsWith("\n") ? body : body + "\n";
+  const tmp = `${ledgerPath}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, text);
+  fs.renameSync(tmp, ledgerPath);
+}
+
+/** Append one entry. O_APPEND keeps concurrent writers from clobbering each other. */
+function appendLine(ledgerPath: string, line: string): void {
+  let prefix = "";
+  try {
+    const { size } = fs.statSync(ledgerPath);
+    if (size > 0) {
+      const fd = fs.openSync(ledgerPath, "r");
+      const buf = Buffer.alloc(1);
+      fs.readSync(fd, buf, 0, 1, size - 1);
+      fs.closeSync(fd);
+      if (buf.toString() !== "\n") prefix = "\n";
+    }
+  } catch {
+    /* new file: no prefix needed */
+  }
+  fs.appendFileSync(ledgerPath, prefix + line + "\n");
 }
 
 function loadLedger(ledgerPath: string): { text: string; items: LedgerItem[]; areas: string[] } {
@@ -143,7 +166,7 @@ export default function (pi: ExtensionAPI) {
         description: "Friction category — must be one of the ledger's configured areas (default: tooling, tokens, hallucination, isolation, security, workflow, quality)",
       }),
       phase: Type.String({ description: "Agent/phase where it happened, e.g. orchestrator, reviewer, implementer" }),
-      problem: Type.String({ description: "One-line problem statement (no pipes, no newlines)" }),
+      problem: Type.String({ description: "One-line problem statement (newlines are collapsed; a literal | is escaped automatically)" }),
       fix: Type.Optional(
         Type.String({ description: "Suggested or already-applied fix — the evidence-tethered suggestion the weekly review reads" }),
       ),
@@ -155,11 +178,15 @@ export default function (pi: ExtensionAPI) {
       scope: scopeParam(),
       force: Type.Optional(Type.Boolean({ description: "Bypass recurrence detection and append a new line" })),
     }),
-    async execute(_toolCallId, params) {
+    promptSnippet: "Log one friction event to the pi-retro ledger (similar entries become recurrences)",
+    promptGuidelines: [
+      "log_friction is for friction that cost real time/tokens/context or risked correctness — not for ordinary work; one call per event, terse.",
+    ],
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       return withLedgerLock(() => {
         const now = today();
         const scope: Scope = (params.scope as Scope) ?? "user";
-        const ledgerPath = ledgerPathFor(scope, process.cwd());
+        const ledgerPath = ledgerPathFor(scope, ctx?.cwd ?? process.cwd());
         const { items, areas } = loadLedger(ledgerPath);
 
         if (!areas.includes(params.area)) {
@@ -201,11 +228,12 @@ export default function (pi: ExtensionAPI) {
           problem,
           ...(fix ? { fix } : {}),
         };
-        items.push({ line: formatLine(entry), entry });
-        writeItems(ledgerPath, items);
+        const line = formatLine(entry);
+        items.push({ line, entry });
+        appendLine(ledgerPath, line);
         const details: { scope: Scope; ledgerPath: string; recurrence?: number } = { scope, ledgerPath };
         return {
-          content: [{ type: "text", text: `Logged to ${scope} ledger: ${formatLine(entry)}` }],
+          content: [{ type: "text", text: `Logged to ${scope} ledger: ${line}` }],
           details,
         };
       });
@@ -219,6 +247,10 @@ export default function (pi: ExtensionAPI) {
     description:
       "Aggregate pi-retro ledger(s): entry counts by area/project over an active window, open vs resolved, top " +
       "recurring friction. Read-only. Use this instead of reading whole ledger files.",
+    promptSnippet: "Aggregate pi-retro ledger stats (read-only: counts by area/project, open vs resolved, recurrences)",
+    promptGuidelines: [
+      "Use friction_stats instead of reading whole ledger files; it never writes the ledger and works on a not-yet-created ledger (reporting zeros).",
+    ],
     annotations: { readOnlyHint: true },
     parameters: Type.Object({
       scope: Type.Optional(
@@ -232,32 +264,43 @@ export default function (pi: ExtensionAPI) {
       user: StatsSchema,
       project: Type.Optional(StatsSchema),
     }),
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const now = today();
       const days = params.days ?? 14;
       const want = params.scope ?? "both";
+      const cwd = ctx?.cwd ?? process.cwd();
 
-      const readScope = (scope: Scope): Stats | null => {
-        const ledgerPath = ledgerPathFor(scope, process.cwd());
-        if (!fs.existsSync(ledgerPath)) return null;
-        const entries = parseItems(fs.readFileSync(ledgerPath, "utf8"))
+      const readScope = (scope: Scope): { stats: Stats; missing: boolean; malformed: ReturnType<typeof findMalformed> } => {
+        const ledgerPath = ledgerPathFor(scope, cwd);
+        // A read-only tool must not throw just because nothing has been logged
+        // yet: an empty ledger and "no ledger" aggregate to the same zeros.
+        const text = fs.existsSync(ledgerPath) ? fs.readFileSync(ledgerPath, "utf8") : "";
+        const entries = parseItems(text)
           .map((i) => i.entry)
           .filter((e): e is FrictionEntry => !!e);
-        return computeStats(entries, days, now);
+        return { stats: computeStats(entries, days, now), missing: !fs.existsSync(ledgerPath), malformed: findMalformed(text) };
+      };
+
+      const report = (scope: Scope, r: ReturnType<typeof readScope>): string => {
+        const head = renderStats(scope, r.stats);
+        if (r.missing) return `${head}\n- ledger not created yet (log_friction with scope=${scope} creates it at ${ledgerPathFor(scope, cwd)})`;
+        if (!r.malformed.length) return head;
+        const listed = r.malformed.slice(0, 5).map((m) => `    ${m.line}: ${m.text}`).join("\n");
+        const more = r.malformed.length > 5 ? `\n    …and ${r.malformed.length - 5} more` : "";
+        return `${head}\n- WARNING: ${r.malformed.length} entry-shaped line(s) could not be parsed and are excluded from these numbers:\n${listed}${more}`;
       };
 
       const user = readScope("user");
-      if (!user) throw new Error(`user ledger not found at ${USER_LEDGER} — call log_friction once to bootstrap it`);
-      const structured: { user: StatsJson; project?: StatsJson } = { user: toStatsJson(user) };
-      const textParts = [renderStats("user", user)];
+      const structured: { user: StatsJson; project?: StatsJson } = { user: toStatsJson(user.stats) };
+      const textParts = [report("user", user)];
 
       if (want !== "user") {
         const project = readScope("project");
-        if (project) {
-          structured.project = toStatsJson(project);
-          textParts.push(renderStats("project", project));
-        } else {
+        if (project.missing) {
           textParts.push("## project ledger: not present (bootstrap by logging with scope=project inside a repo)");
+        } else {
+          structured.project = toStatsJson(project.stats);
+          textParts.push(report("project", project));
         }
       }
 
@@ -278,13 +321,14 @@ export default function (pi: ExtensionAPI) {
       "Provide a search phrase that uniquely matches one unresolved entry (matched against problem+fix+phase).",
     parameters: Type.Object({
       search: Type.String({ description: "Search phrase — all tokens must appear in the target entry" }),
-      resolution: Type.String({ description: "What fixed it, terse (no pipes, no newlines)" }),
+      resolution: Type.String({ description: "What fixed it, terse (newlines are collapsed)" }),
       scope: scopeParam(),
     }),
-    async execute(_toolCallId, params) {
+    promptSnippet: "Mark a pi-retro ledger entry resolved with a one-line note",
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       return withLedgerLock(() => {
         const scope: Scope = (params.scope as Scope) ?? "user";
-        const ledgerPath = ledgerPathFor(scope, process.cwd());
+        const ledgerPath = ledgerPathFor(scope, ctx?.cwd ?? process.cwd());
         const { items } = loadLedger(ledgerPath);
 
         const tokens = tokenize(params.search);
@@ -329,10 +373,11 @@ export default function (pi: ExtensionAPI) {
       ),
       days: Type.Optional(Type.Number({ description: "Staleness threshold in days when resolvedOnly=false (default 30)" })),
     }),
-    async execute(_toolCallId, params) {
+    promptSnippet: "Archive reviewed pi-retro entries into a dated archive file (owner approval only)",
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       return withLedgerLock(() => {
         const scope: Scope = (params.scope as Scope) ?? "user";
-        const ledgerPath = ledgerPathFor(scope, process.cwd());
+        const ledgerPath = ledgerPathFor(scope, ctx?.cwd ?? process.cwd());
         const { items } = loadLedger(ledgerPath);
 
         const { archive, keep } = partitionForArchive(items, {
@@ -374,4 +419,36 @@ export default function (pi: ExtensionAPI) {
       });
     },
   });
+
+  pi.registerCommand("retro", {
+    description: "Show pi-retro friction stats (user ledger, plus this repo's ledger when present)",
+    handler: async (_args: string, ctx) => {
+      const cwd = ctx?.cwd ?? process.cwd();
+      const now = today();
+      const parts: string[] = [];
+      for (const scope of ["user", "project"] as const) {
+        const ledgerPath = ledgerPathFor(scope, cwd);
+        if (!fs.existsSync(ledgerPath)) {
+          parts.push(`## ${scope} ledger: not present (${ledgerPath})`);
+          continue;
+        }
+        const text = fs.readFileSync(ledgerPath, "utf8");
+        const entries = parseItems(text)
+          .map((i) => i.entry)
+          .filter((e): e is FrictionEntry => !!e);
+        parts.push(renderStats(scope, computeStats(entries, 14, now)));
+        const malformed = findMalformed(text);
+        if (malformed.length) parts.push(`- WARNING: ${malformed.length} unparsable entry-shaped line(s) in ${ledgerPath}`);
+      }
+      report(ctx, parts.join("\n\n"));
+    },
+  });
+}
+
+function report(ctx: { ui?: { notify?: (msg: string, level?: "info" | "warning" | "error") => void } }, message: string): void {
+  try {
+    ctx.ui?.notify?.(message, "info");
+  } catch {
+    /* non-interactive mode */
+  }
 }
